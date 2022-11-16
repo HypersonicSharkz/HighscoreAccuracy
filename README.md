@@ -1,13 +1,10 @@
 # HighscoreAccuracy
-Adds accuracy information to level select and when playing
+Adds accuracy information to level select and when playing. Settings can be changed in `BepInEx/config/com.hypersonicsharkz.highscoreaccuracy.cfg`
 
-## Dependencies:
-[TrombLoader](https://github.com/NyxTheShield/TrombLoader)    
-[TrombSettings](https://github.com/HypersonicSharkz/TrombSettings)    
-*If you also want a letter rank while in a track:*   
-[Accuracy Counter](https://cdn.discordapp.com/attachments/1022946803550793781/1026057201590206564/AccuracyCounter.dll)    
-
-  
+## Dependencies
+[TrombLoader](https://github.com/NyxTheShield/TrombLoader)
+*If you also want a letter rank while in a track:*
+[Accuracy Counter](https://cdn.discordapp.com/attachments/1022946803550793781/1026057201590206564/AccuracyCounter.dll)
 
 ## Features
 - Show accuracy on highscores in the level select menu

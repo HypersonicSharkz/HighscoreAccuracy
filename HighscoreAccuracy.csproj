@@ -59,9 +59,6 @@
     <Reference Include="TrombLoader">
       <HintPath>$(TromboneChampDir)\BepInEx\plugins\TrombLoader.dll</HintPath>
     </Reference>
-    <Reference Include="TrombSettings">
-      <HintPath>$(TromboneChampDir)\BepInEx\plugins\TrombSettings.dll</HintPath>
-    </Reference>
     <Reference Include="UnityEngine">
       <HintPath>$(TromboneChampDir)\TromboneChamp_Data\Managed\UnityEngine.dll</HintPath>
     </Reference>
