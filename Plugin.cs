@@ -1,226 +1,150 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
-using System.Runtime.Serialization.Formatters.Binary;
+using BaboonAPI.Hooks.Tracks;
 using BepInEx;
 using BepInEx.Configuration;
+using BepInEx.Logging;
 using HarmonyLib;
-using SimpleJSON;
-using TrombLoader.Data;
-using TrombLoader.Helpers;
-using TrombSettings;
 using UnityEngine;
 using UnityEngine.UI;
 
-namespace HighscoreAccuracy
+namespace HighscoreAccuracy;
+
+[HarmonyPatch]
+[BepInDependency("TrombSettings", BepInDependency.DependencyFlags.SoftDependency)]
+[BepInDependency("ch.offbeatwit.baboonapi.plugin")]
+[BepInPlugin(PluginInfo.PLUGIN_GUID, PluginInfo.PLUGIN_NAME, PluginInfo.PLUGIN_VERSION)]
+public class Plugin : BaseUnityPlugin
 {
-    [HarmonyPatch]
-    [BepInDependency("com.steven.trombone.accuracycounter", BepInDependency.DependencyFlags.SoftDependency)]
-    [BepInDependency("com.hypersonicsharkz.trombsettings")]
-    [BepInPlugin("com.hypersonicsharkz.highscoreaccuracy", "Highscore Accuracy", "1.1.3")]
-    public class Plugin : BaseUnityPlugin
+    internal static Plugin Instance;
+    internal static ManualLogSource Log;
+
+    internal static ConfigEntry<AccType> accType;
+    internal static ConfigEntry<bool> showLetterRank;
+    internal static ConfigEntry<int> decimals;
+    internal static ConfigEntry<bool> showAccIngame;
+    internal static ConfigEntry<bool> showScoreIngame;
+    internal static ConfigEntry<bool> showPBIngame;
+
+    private void Awake()
     {
-        internal static Plugin Instance;
+        Instance = this;
+        Log = Logger;
 
-        public enum AccType
+        accType = Config.Bind("General", "Acc Type", AccType.BaseGame);
+        showLetterRank = Config.Bind("General", "Show Letters", true);
+        decimals = Config.Bind("General", "Decimal Places", 2);
+        showAccIngame = Config.Bind("General", "Show acc in track", true);
+        showScoreIngame = Config.Bind("General", "Show score in track", false);
+        showPBIngame = Config.Bind("General", "Show PB in track", true);
+
+        object settings = OptionalTrombSettings.GetConfigPage("Highscore Acc");
+        if (settings != null)
         {
-            BaseGame,
-            Real
+            OptionalTrombSettings.Add(settings, showLetterRank);
+            OptionalTrombSettings.Add(settings, accType);
+            OptionalTrombSettings.AddSlider(settings, 0, 4, 1, true, decimals);
+
+            OptionalTrombSettings.Add(settings, showAccIngame);
+            OptionalTrombSettings.Add(settings, showScoreIngame);
+            OptionalTrombSettings.Add(settings, showPBIngame);
         }
 
-        internal static ConfigEntry<AccType> accType;
-        internal static ConfigEntry<bool> showLetterRank;
-        internal static ConfigEntry<int> decimals;
-        internal static ConfigEntry<bool> showAccIngame;
-        internal static ConfigEntry<bool> showPBIngame;
+        new Harmony(PluginInfo.PLUGIN_GUID).PatchAll();
+    }
 
-        private void Awake()
+    [HarmonyPatch(typeof(LevelSelectController), "populateScores")]
+    private static void Postfix(LevelSelectController __instance, int ___songindex, List<SingleTrackData> ___alltrackslist)
+    {
+        var levelData = Utils.GetLevelData(___alltrackslist[___songindex].trackref);
+        for (int k = 0; k < 5; k++)
         {
-            Instance = this;
-
-            accType = Config.Bind("General", "Acc Type", AccType.BaseGame);
-            showLetterRank = Config.Bind("General", "Show Letters", true);
-            decimals = Config.Bind("General", "Decimal Places", 2);
-            showAccIngame = Config.Bind("General", "Show acc in track", true);
-            showPBIngame = Config.Bind("General", "Show PB in track", true);
-
-            TrombEntryList settings = TrombConfig.TrombSettings["Highscore Acc"];
-
-            settings.Add(showLetterRank);
-            settings.Add(accType);
-            settings.Add(new StepSliderConfig(0, 4, 1, true, decimals));
-
-            settings.Add(showAccIngame);
-            settings.Add(showPBIngame);
-
-            new Harmony("com.hypersonicsharkz.highscoreaccuracy").PatchAll();
-        }
-
-        [HarmonyPatch(typeof(LevelSelectController), "populateScores")]
-        private static void Postfix(LevelSelectController __instance, int ___songindex, List<SingleTrackData> ___alltrackslist)
-        {
-            GetMaxScore(___alltrackslist[___songindex].trackref, out int gameMax, out int realMax);
-            for (int k = 0; k < 5; k++)
+            try
             {
-                try
+                if (float.TryParse(__instance.topscores[k].text, out float topScore))
                 {
-                    float max = accType.Value == AccType.Real ? realMax : gameMax;
-
-                    if (float.TryParse(__instance.topscores[k].text, out float percent))
-                    {
-                        __instance.topscores[k].fontSize = 9;
-                        percent /= max;
-
-                        string letter = "";
-                        if (showLetterRank.Value)
-                        {
-                            letter = Utils.ScoreLetter(float.Parse(__instance.topscores[k].text) / gameMax);
-                        }
-
-                        __instance.topscores[k].text = __instance.topscores[k].text + " " + (100 * percent).FormatDecimals() + "% " + letter;
-                    }
-                }
-                catch (Exception e)
-                {
-                    Debug.LogError(e.Message);
-                }
-
-            }
-        }
-
-        [HarmonyPatch(typeof(PointSceneController), "doneWithCountUp")]
-        private static void Postfix(PointSceneController __instance, int ___totalscore)
-        {
-            Instance.StartCoroutine(SetTextLate(__instance, ___totalscore));
-        }
-
-        static IEnumerator SetTextLate(PointSceneController __instance, int ___totalscore)
-        {
-            yield return new WaitForSeconds(0.2f);
-
-            float percent;
-            float prevPrecent;
-
-            string trackRef = GlobalVariables.chosen_track_data.trackref;
-            GetMaxScore(trackRef, out int gameMax, out int realMax);
-
-            if (accType.Value == AccType.Real)
-            {
-                percent = ((float)___totalscore / (float)realMax) * 100;
-                prevPrecent = (float.Parse(__instance.txt_prevhigh.text) / (float)realMax) * 100;
-            }
-            else
-            {
-                percent = (GlobalVariables.gameplay_scoreperc * 100);
-                prevPrecent = (float.Parse(__instance.txt_prevhigh.text) / (float)gameMax) * 100;
-            }
-
-            __instance.scorecountertext.text += " " + percent.FormatDecimals() + "%";
-            __instance.txt_prevhigh.text += " " + prevPrecent.FormatDecimals() + "%";
-        }
-
-        [HarmonyPatch(typeof(GameController), "Start")]
-        private static void Postfix(GameController __instance, List<float[]> ___leveldata)
-        {
-            float pbValue = 0;
-            if (showPBIngame.Value)
-            {
-                Utils.GetMaxScore(___leveldata, out int gameMax, out int realMax);
-                int highscore = FindHighScore(GlobalVariables.chosen_track);
-
-                if (highscore > 0)
-                {
-                    GameObject gameObject = GameObject.Find("ScoreShadow");
-                    GameObject pb = UnityEngine.Object.Instantiate<GameObject>(gameObject, gameObject.transform.parent);
-
-                    pb.transform.localScale = Vector3.one;
-
-                    RectTransform rect = pb.GetComponent<RectTransform>();
-                    rect.anchoredPosition = new Vector2(rect.anchoredPosition.x, rect.anchoredPosition.y - 50f);
-
-                    var foregroundText = pb.transform.Find("Score").GetComponent<Text>();
-                    var shadowText = pb.GetComponent<Text>();
-
-                    float max = accType.Value == AccType.Real ? realMax : gameMax;
-                    float percent = highscore / max * 100;
-
-                    foregroundText.text = "PB: " + percent.FormatDecimals() + "%";
-                    shadowText.text = "PB: " + percent.FormatDecimals() + "%";
-
-                    pbValue = percent;
+                    __instance.topscores[k].fontSize = 19;
+                    string letter = showLetterRank.Value ? Utils.ScoreLetter(topScore / Utils.GetMaxScore(AccType.BaseGame, levelData)) : "";
+                    float percent = topScore / Utils.GetMaxScore(accType.Value, levelData);
+                    __instance.topscores[k].text = __instance.topscores[k].text + " " + (100 * percent).FormatDecimals() + "% " + letter;
                 }
             }
-           
-            if (showAccIngame.Value)
+            catch (Exception e)
             {
-                if (__instance.freeplay)
-                {
-                    return;
-                }
-                GameObject gameObject = GameObject.Find("ScoreShadow");
-                PercentCounter counter = UnityEngine.Object.Instantiate<GameObject>(gameObject, gameObject.transform.parent).AddComponent<PercentCounter>();
+                Debug.LogError(e.Message);
+            }
+        }
+    }
 
-                counter.Init(___leveldata, pbValue);
+    [HarmonyPatch(typeof(PointSceneController), "doCoins")]
+    private static void Postfix(PointSceneController __instance)
+    {
+        string trackRef = GlobalVariables.chosen_track_data.trackref;
+        List<float[]> levelData = Utils.GetLevelData(trackRef);
+        int max = Utils.GetMaxScore(accType.Value, levelData);
+        float percent = (float)GlobalVariables.gameplay_scoretotal / max * 100;
+        float prevPrecent = float.Parse(__instance.txt_prevhigh.text) / max * 100;
+
+        __instance.txt_score.text += " " + percent.FormatDecimals() + "%";
+        __instance.txt_prevhigh.text += " " + prevPrecent.FormatDecimals() + "%";
+    }
+
+    [HarmonyPatch(typeof(GameController), "Start")]
+    private static void Postfix(GameController __instance, List<float[]> ___leveldata)
+    {
+        if (__instance.freeplay) return;
+        float pbValue = 0;
+        GameObject gameObject = GameObject.Find("ScoreShadow");
+        if (showPBIngame.Value)
+        {
+            var score = TrackLookup.lookupScore(GlobalVariables.chosen_track);
+            int highscore = score != null ? score.Value.highScores.FirstOrDefault() : 0;
+            if (highscore > 0)
+            {
+                GameObject pb = Instantiate(gameObject, gameObject.transform.parent);
+
+                pb.transform.localScale = Vector3.one;
+
+                RectTransform rect = pb.GetComponent<RectTransform>();
+                rect.anchoredPosition = new Vector2(rect.anchoredPosition.x, rect.anchoredPosition.y - 50f);
+
+                var foregroundText = pb.transform.Find("Score").GetComponent<Text>();
+                var shadowText = pb.GetComponent<Text>();
+
+                float max = Utils.GetMaxScore(accType.Value, ___leveldata);
+                float percent = highscore / max * 100;
+
+                foregroundText.text = "PB: " + percent.FormatDecimals() + "%";
+                shadowText.text = "PB: " + percent.FormatDecimals() + "%";
+
+                pbValue = percent;
             }
         }
 
-        private static int FindHighScore(string trackRef)
+        if (showAccIngame.Value)
         {
-            string[] trackScores = GlobalVariables.localsave.data_trackscores
-                .Where(i => i != null && i[0] == trackRef)
-                .FirstOrDefault();
-            return trackScores == null ? 0 : int.Parse(trackScores[2]);
+            PercentCounter percentCounter = Instantiate(gameObject, gameObject.transform.parent).AddComponent<PercentCounter>();
+            percentCounter.Init(___leveldata, pbValue);
         }
 
-        [HarmonyPatch(typeof(GameController), "getScoreAverage")]
-        private static void Postfix(int ___totalscore, int ___currentnoteindex)
+        if (showScoreIngame.Value)
         {
-            if (showAccIngame.Value)
-            {
-                PercentCounter.scoreChanged(___totalscore, ___currentnoteindex);
-            }
+            ScoreCounter scoreCounter = Instantiate(gameObject, gameObject.transform.parent).AddComponent<ScoreCounter>();
+            scoreCounter.Init(___leveldata);
         }
+    }
 
-        private static void GetMaxScore(string trackRef, out int gameMaxScore, out int realMaxScore)
+    [HarmonyPatch(typeof(GameController), "getScoreAverage")]
+    private static void Postfix(int ___totalscore, int ___currentnoteindex)
+    {
+        if (showAccIngame.Value)
         {
-            string baseTmb = Application.streamingAssetsPath + "/leveldata/" + trackRef + ".tmb";
-            List<float[]> levelData = !File.Exists(baseTmb)
-                ? GetCustomLevelData(trackRef)
-                : GetBaseLevelData(baseTmb);
-
-            Utils.GetMaxScore(levelData, out gameMaxScore, out realMaxScore);
+            PercentCounter.scoreChanged(___totalscore, ___currentnoteindex);
         }
-
-        private static List<float[]> GetBaseLevelData(string baseTmb) => GetSavedLevel(baseTmb).savedleveldata;
-
-        private static List<float[]> GetCustomLevelData(string trackRef)
+        if (showScoreIngame.Value)
         {
-            if (!Globals.ChartFolders.TryGetValue(trackRef, out string customChartPath))
-            {
-                Instance.Logger.LogWarning($"Could not find {trackRef}");
-                return new List<float[]>();
-            }
-            using (var streamReader = new StreamReader(customChartPath + "/song.tmb"))
-            {
-                string baseChartName = Application.streamingAssetsPath + "/leveldata/ballgame.tmb";
-                SavedLevel savedLevel = GetSavedLevel(baseChartName);
-                CustomSavedLevel customLevel = new CustomSavedLevel(savedLevel);
-                string jsonString = streamReader.ReadToEnd();
-                var jsonObject = JSON.Parse(jsonString);
-                customLevel.Deserialize(jsonObject);
-                return customLevel.savedleveldata;
-            }
-        }
-
-        private static SavedLevel GetSavedLevel(string baseTmb)
-        {
-            using (FileStream fileStream = File.Open(baseTmb, FileMode.Open))
-            {
-                BinaryFormatter binaryFormatter = new BinaryFormatter();
-                return (SavedLevel)binaryFormatter.Deserialize(fileStream);
-            }
+            ScoreCounter.scoreChanged(___totalscore, ___currentnoteindex);
         }
     }
 }
